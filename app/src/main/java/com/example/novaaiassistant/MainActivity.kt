@@ -1,8 +1,15 @@
 package com.example.novaaiassistant
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -39,27 +46,199 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
+
+ private val microphonePermissionLauncher =
+ registerForActivityResult(
+ ActivityResultContracts.RequestPermission()
+ ) { granted ->
+ if (granted) {
+ startVoiceRecognition()
+ } else {
+ voiceStatus?.invoke("Microphone permission allow karna zaroori hai.")
+ }
+ }
+
+ private var speechRecognizer: SpeechRecognizer? = null
+ private var latestVoiceText: ((String) -> Unit)? = null
+ private var voiceStatus: ((String) -> Unit)? = null
 
  override fun onCreate(savedInstanceState: Bundle?) {
  super.onCreate(savedInstanceState)
 
  setContent {
  MaterialTheme {
- NovaApp()
+ NovaApp(
+ onMicClick = { textCallback, statusCallback ->
+ latestVoiceText = textCallback
+ voiceStatus = statusCallback
+
+ val permission = ContextCompat.checkSelfPermission(
+ this,
+ Manifest.permission.RECORD_AUDIO
+ )
+
+ if (permission == PackageManager.PERMISSION_GRANTED) {
+ startVoiceRecognition()
+ } else {
+ microphonePermissionLauncher.launch(
+ Manifest.permission.RECORD_AUDIO
+ )
  }
  }
+ )
+ }
+ }
+ }
+
+ private fun startVoiceRecognition() {
+ if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+ voiceStatus?.invoke(
+ "Is phone par voice recognition available nahi hai."
+ )
+ return
+ }
+
+ if (speechRecognizer == null) {
+ speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
+
+ speechRecognizer?.setRecognitionListener(
+ object : RecognitionListener {
+
+ override fun onReadyForSpeech(params: Bundle?) {
+ voiceStatus?.invoke("Nova sun rahi hai...")
+ }
+
+ override fun onBeginningOfSpeech() {
+ voiceStatus?.invoke("Bolna shuru kijiye...")
+ }
+
+ override fun onRmsChanged(rmsdB: Float) {
+ }
+
+ override fun onBufferReceived(buffer: ByteArray?) {
+ }
+
+ override fun onEndOfSpeech() {
+ voiceStatus?.invoke("Awaaz samjhi ja rahi hai...")
+ }
+
+ override fun onError(error: Int) {
+ voiceStatus?.invoke(speechErrorMessage(error))
+ }
+
+ override fun onResults(results: Bundle?) {
+ val matches = results?.getStringArrayList(
+ SpeechRecognizer.RESULTS_RECOGNITION
+ )
+
+ val spokenText = matches?.firstOrNull()
+
+ if (!spokenText.isNullOrBlank()) {
+ latestVoiceText?.invoke(spokenText)
+ voiceStatus?.invoke("Voice command complete.")
+ } else {
+ voiceStatus?.invoke(
+ "Mujhe clear voice command nahi mili."
+ )
+ }
+ }
+
+ override fun onPartialResults(partialResults: Bundle?) {
+ }
+
+ override fun onEvent(eventType: Int, params: Bundle?) {
+ }
+ }
+ )
+ }
+
+ val recognizerIntent = Intent(
+ RecognizerIntent.ACTION_RECOGNIZE_SPEECH
+ ).apply {
+ putExtra(
+ RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+ RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+ )
+
+ putExtra(
+ RecognizerIntent.EXTRA_LANGUAGE,
+ "hi-IN"
+ )
+
+ putExtra(
+ RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE,
+ "hi-IN"
+ )
+
+ putExtra(
+ RecognizerIntent.EXTRA_PROMPT,
+ "Nova ko command dein"
+ )
+ }
+
+ speechRecognizer?.startListening(recognizerIntent)
+ }
+
+ private fun speechErrorMessage(error: Int): String {
+ return when (error) {
+ SpeechRecognizer.ERROR_AUDIO ->
+ "Microphone audio mein problem aayi."
+
+ SpeechRecognizer.ERROR_CLIENT ->
+ "Voice recognition client error aaya."
+
+ SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS ->
+ "Microphone permission required hai."
+
+ SpeechRecognizer.ERROR_NETWORK ->
+ "Network problem ki wajah se voice recognize nahi hui."
+
+ SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
+ "Network timeout ho gaya. Internet check karein."
+
+ SpeechRecognizer.ERROR_NO_MATCH ->
+ "Nova aapki baat samajh nahi paayi. Dobara boliye."
+
+ SpeechRecognizer.ERROR_SPEECH_TIMEOUT ->
+ "Koi voice input nahi mila."
+
+ SpeechRecognizer.ERROR_RECOGNIZER_BUSY ->
+ "Voice recognizer busy hai. Dobara Mic dabayein."
+
+ else ->
+ "Voice recognition mein error aaya. Dobara try karein."
+ }
+ }
+
+ override fun onDestroy() {
+ speechRecognizer?.destroy()
+ speechRecognizer = null
+ super.onDestroy()
  }
 }
 
 @Composable
-fun NovaApp() {
- var userMessage by remember { mutableStateOf("") }
+fun NovaApp(
+ onMicClick: (
+ onTextReceived: (String) -> Unit,
+ onStatusChanged: (String) -> Unit
+ ) -> Unit
+) {
+ var userMessage by remember {
+ mutableStateOf("")
+ }
+
  var novaReply by remember {
  mutableStateOf(
- "Hello! Main Nova hoon, tumhari AI assistant. Aaj main tumhari kis tarah help kar sakti hoon?"
+ "Hello! Main Nova hoon. Aaj main tumhari kis tarah help kar sakti hoon?"
  )
+ }
+
+ var voiceStatus by remember {
+ mutableStateOf("Mic button dabakar command dein.")
  }
 
  val backgroundColor = Color(0xFF08111F)
@@ -99,12 +278,21 @@ fun NovaApp() {
  )
 
  Text(
- text = "Your friendly AI assistant",
+ text = "Voice-enabled AI assistant",
  color = softText,
  fontSize = 15.sp
  )
 
- Spacer(modifier = Modifier.height(30.dp))
+ Spacer(modifier = Modifier.height(22.dp))
+
+ Text(
+ text = voiceStatus,
+ color = Color(0xFF9DDFFF),
+ fontSize = 14.sp,
+ textAlign = TextAlign.Center
+ )
+
+ Spacer(modifier = Modifier.height(20.dp))
 
  Card(
  modifier = Modifier.fillMaxWidth(),
@@ -136,7 +324,9 @@ fun NovaApp() {
 
  OutlinedTextField(
  value = userMessage,
- onValueChange = { userMessage = it },
+ onValueChange = {
+ userMessage = it
+ },
  modifier = Modifier.fillMaxWidth(),
  label = {
  Text("Type a message for Nova")
@@ -186,7 +376,15 @@ fun NovaApp() {
 
  Button(
  onClick = {
- novaReply = "Mic feature abhi coming soon hai. Pehle text chat ko fully working banate hain."
+ onMicClick(
+ { recognizedText ->
+ userMessage = recognizedText
+ novaReply = createNovaReply(recognizedText)
+ },
+ { status ->
+ voiceStatus = status
+ }
+ )
  },
  colors = ButtonDefaults.buttonColors(
  containerColor = Color(0xFF263B59),
@@ -216,20 +414,20 @@ fun createNovaReply(message: String): String {
  val text = message.trim().lowercase()
 
  if (text.isEmpty()) {
- return "Please apna message likho. Main help karne ke liye yahan hoon."
+ return "Please apna message bolkar ya likhkar bhejo."
  }
 
  return when {
  text.contains("udaas") ||
  text.contains("sad") ||
  text.contains("depressed") -> {
- "Mujhe afsos hai ki tum udaas mehsoos kar rahe ho. Tum akelay nahi ho. Agar tum comfortable ho, to mujhe bata sakte ho ki kya hua."
+ "Mujhe afsos hai ki tum udaas mehsoos kar rahe ho. Agar comfortable ho, to mujhe bata sakte ho ki kya hua."
  }
 
  text.contains("galti") ||
  text.contains("mistake") ||
  text.contains("error") -> {
- "Koi baat nahi, galti hona normal hai. Hum calmly dekh sakte hain ki kya hua aur agali baar ise kaise improve kiya ja sakta hai."
+ "Koi baat nahi, galti hona normal hai. Hum calmly dekh sakte hain ki kya hua."
  }
 
  text.contains("hello") ||
@@ -240,11 +438,11 @@ fun createNovaReply(message: String): String {
 
  text.contains("kaise ho") ||
  text.contains("how are you") -> {
- "Main theek hoon aur help ke liye ready hoon. Main AI assistant hoon, isliye meri feelings human jaisi nahi hain, lekin main tumhari baat dhyan se samajhne ki koshish karungi."
+ "Main help ke liye ready hoon. Main ek AI assistant hoon, real human nahi."
  }
 
  else -> {
- "Maine tumhara message padha: \"$message\". Abhi main basic offline mode mein hoon, lekin jaldi hi intelligent AI chat, voice commands, notes aur reminders add honge."
+ "Maine tumhari command suni: \"$message\". Abhi Nova basic offline mode mein hai."
  }
  }
 }
